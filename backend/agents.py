@@ -24,10 +24,14 @@ SENSITIVE_WORDS = ["harass", "ragging", "ragged", "assault", "molest", "stalk", 
                    "abuse", "sexual", "blackmail", "suicid", "self harm", "self-harm"]
 
 # Works with Gemini, Groq, OpenRouter, Ollama (anything OpenAI-compatible). Set in .env
-llm = OpenAI(api_key=os.environ["LLM_API_KEY"], base_url=os.environ["LLM_BASE_URL"])
+_api_key = os.getenv("LLM_API_KEY", "mock-key")
+_base_url = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+llm = OpenAI(api_key=_api_key, base_url=_base_url)
+
 # LLM_MODEL can hold SEVERAL models separated by commas, e.g.  gemini-3.5-flash,gemini-3.7-flash
 # Free tiers limit requests per model per day, so when one runs out we automatically try the next.
-MODELS = [m.strip() for m in os.environ["LLM_MODEL"].split(",") if m.strip()]
+raw_models = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+MODELS = [m.strip() for m in raw_models.split(",") if m.strip()] or ["gemini-1.5-flash"]
 MODEL = MODELS[0]
 _blocked_until: dict[str, float] = {}      # model name -> time (seconds) until we skip it
 
@@ -36,7 +40,7 @@ _blocked_until: dict[str, float] = {}      # model name -> time (seconds) until 
 def ask_llm_text(system: str, user: str) -> str:
     now = time.time()
     order = [m for m in MODELS if _blocked_until.get(m, 0) <= now] or MODELS
-    last = None
+    last: Exception | None = None
     for m in order:
         try:
             res = llm.chat.completions.create(
@@ -48,11 +52,13 @@ def ask_llm_text(system: str, user: str) -> str:
             last = ex
             _blocked_until[m] = now + 600          # skip this model for 10 minutes
             log.warning("Model %s unavailable (%s); trying next model", m, type(ex).__name__)
-    raise last
+    if last is not None:
+        raise last
+    raise RuntimeError("LLM service request failed: no available models responded")
 
 
 def ask_llm_json(system: str, user: str, retries: int = 1) -> dict:
-    last = None
+    last: Exception | None = None
     for _ in range(retries + 1):
         try:
             text = ask_llm_text(system + "\nReturn ONLY valid JSON. No markdown, no extra text.", user)
@@ -62,7 +68,9 @@ def ask_llm_json(system: str, user: str, retries: int = 1) -> dict:
         except Exception as ex:                                 # noqa: BLE001
             last = ex
             log.warning("LLM call/parse failed: %s", ex)
-    raise last
+    if last is not None:
+        raise last
+    raise RuntimeError("LLM JSON parsing failed after retries")
 
 
 def has_sensitive_words(text: str) -> bool:

@@ -26,10 +26,17 @@ from supabase import create_client  # noqa: E402
 import agents  # noqa: E402
 
 # ------------------------------------------------------------------ setup
-sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://placeholder.supabase.co")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY", "placeholder-key")
+sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")                       # dev/demo only
 WARDEN_EMAIL = os.getenv("WARDEN_EMAIL", "warden@hostel-demo.local")
-ORIGINS = [o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
+raw_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:5173,http://localhost:3000")
+if raw_origins.strip() == "*":
+    ORIGINS = ["*"]
+else:
+    ORIGINS = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
 CATEGORIES = agents.CATEGORIES
 ACTIVE = ["open", "in_progress", "reopened"]
@@ -291,8 +298,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Hostel Complaint Agent", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_origin_regex=r"https://.*\.vercel\.app",
-                   allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 # ================================================================== STUDENT ENDPOINTS
